@@ -19,6 +19,43 @@ RTTI_END_CLASS
 
 namespace nap
 {
+    namespace RBoxAttributes
+    {
+        // Track attributes
+        constexpr const char* const TrackID     = "TrackID";
+        constexpr const char* const Name         = "Name";
+        constexpr const char* const Artist       = "Artist";
+        constexpr const char* const Album        = "Album";
+        constexpr const char* const Genre        = "Genre";
+        constexpr const char* const Label        = "Label";
+        constexpr const char* const Tonality     = "Tonality";
+        constexpr const char* const FileName     = "FileName";
+        constexpr const char* const Location     = "Location";
+        constexpr const char* const DateAdded    = "DateAdded";
+        constexpr const char* const TotalTime    = "TotalTime";
+        constexpr const char* const Year         = "Year";
+        constexpr const char* const PlayCount    = "PlayCount";
+        constexpr const char* const Rating       = "Rating";
+        constexpr const char* const AverageBpm   = "AverageBpm";
+        constexpr const char* const Type         = "Type";
+        constexpr const char* const TrackType    = "TrackType";
+        constexpr const char* const Key          = "Key";
+
+        // Position mark attributes
+        constexpr const char* const PositionMark_Num   = "Num";
+        constexpr const char* const PositionMark_Name  = "Name";
+        constexpr const char* const PositionMark_Start = "Start";
+    }
+
+    namespace RBoxNodes
+    {
+        constexpr const char* const DJ_PLAYLISTS    = "DJ_PLAYLISTS";
+        constexpr const char* const COLLECTION      = "COLLECTION";
+        constexpr const char* const TRACK           = "TRACK";
+        constexpr const char* const NODE            = "NODE";
+        constexpr const char* const POSITION_MARK   = "POSITION_MARK";
+        constexpr const char* const PLAYLISTS       = "PLAYLISTS";
+    }
 
     std::string decodeURI(const std::string& encoded)
     {
@@ -71,22 +108,22 @@ namespace nap
      */
     static void readPlaylistNodes(const rapidxml::xml_node<>* parent, const TrackMap& tracks, PlaylistMap& playlists)
     {
-        for (auto* node = parent->first_node("NODE"); node != nullptr; node = node->next_sibling("NODE"))
+        for (auto* node = parent->first_node(RBoxNodes::NODE); node != nullptr; node = node->next_sibling(RBoxNodes::NODE))
         {
-            if (getAttribute(node, "Type") == "0")
+            if (getAttribute(node, RBoxAttributes::Type) == "0")
             {
                 readPlaylistNodes(node, tracks, playlists);
                 continue;
             }
 
-            std::string name = getAttribute(node, "Name");
+            std::string name = getAttribute(node, RBoxAttributes::Name);
             if (playlists.find(name) != playlists.end())
                 nap::Logger::warn("Duplicate playlist name '%s', merging entries", name.c_str());
 
             auto& playlist = playlists[name];
-            for (auto* track_node = node->first_node("TRACK"); track_node != nullptr; track_node = track_node->next_sibling("TRACK"))
+            for (auto* track_node = node->first_node(RBoxNodes::TRACK); track_node != nullptr; track_node = track_node->next_sibling(RBoxNodes::TRACK))
             {
-                std::string key = getAttribute(track_node, "Key");
+                std::string key = getAttribute(track_node, RBoxAttributes::Key);
                 char* end = nullptr;
                 long long id = std::strtoll(key.c_str(), &end, 10);
                 if (key.empty() || *end != '\0')
@@ -110,8 +147,11 @@ namespace nap
     bool RbCollectionReader::init(utility::ErrorState &errorState)
     {
         mTracks.clear();
+        mPlaylists.clear();
 
+        // Create timer to measure how long it takes to read the collection
         SteadyTimer timer; timer.start();
+
         // Read file into a null terminated, mutable buffer, as required by rapidxml
         std::vector<char> buffer;
         try
@@ -122,9 +162,11 @@ namespace nap
         }
         catch (const std::exception& e)
         {
-            return errorState.check(false, "Unable to read '%s': %s", mCollectionFile.c_str(), e.what());
+            errorState.fail("Unable to read '%s': %s", mCollectionFile.c_str(), e.what());
+            return false;
         }
 
+        // Parse the XML document
         rapidxml::xml_document<> doc;
         try
         {
@@ -132,21 +174,26 @@ namespace nap
         }
         catch (const rapidxml::parse_error& e)
         {
-            return errorState.check(false, "Unable to parse '%s': %s", mCollectionFile.c_str(), e.what());
+            errorState.fail("Unable to parse '%s': %s", mCollectionFile.c_str(), e.what());
+            return false;
         }
 
-        auto* root = doc.first_node("DJ_PLAYLISTS");
-        if (!errorState.check(root != nullptr, "'%s' has no DJ_PLAYLISTS node", mCollectionFile.c_str()))
+        // Get the root node
+        auto* root = doc.first_node(RBoxNodes::DJ_PLAYLISTS);
+        if (!errorState.check(root != nullptr, "'%s' has no %s node",  mCollectionFile.c_str(), RBoxNodes::DJ_PLAYLISTS))
             return false;
 
-        auto* collection = root->first_node("COLLECTION");
-        if (!errorState.check(collection != nullptr, "'%s' has no COLLECTION node", mCollectionFile.c_str()))
+        // Get the collection node
+        auto* collection = root->first_node(RBoxNodes::COLLECTION);
+        if (!errorState.check(collection != nullptr, "'%s' has no %s node", mCollectionFile.c_str(), RBoxNodes::COLLECTION))
             return false;
 
-        for (auto* track_node = collection->first_node("TRACK"); track_node != nullptr; track_node = track_node->next_sibling("TRACK"))
+        // Tracks
+        for (auto* track_node = collection->first_node(RBoxNodes::TRACK); track_node != nullptr; track_node = track_node->next_sibling(RBoxNodes::TRACK))
         {
-            auto* id_attr = track_node->first_attribute("TrackID");
-            if (!errorState.check(id_attr != nullptr, "TRACK entry without TrackID in '%s'", mCollectionFile.c_str()))
+            // Get the track ID attribute and convert it to a 64 bit integer
+            auto* id_attr = track_node->first_attribute(RBoxAttributes::TrackID);
+            if (!errorState.check(id_attr != nullptr, "%s entry without %s in '%s'", RBoxNodes::TRACK, RBoxAttributes::TrackID, mCollectionFile.c_str()))
                 return false;
 
             // Convert id to a 64 bit integer
@@ -157,33 +204,47 @@ namespace nap
             if (!errorState.check(errno == 0 && end != id_str.c_str() && *end == '\0', "Invalid TrackID '%s' in '%s'", id_str.c_str(), mCollectionFile.c_str()))
                 return false;
 
+            // Read track attributes
             RbTrack track;
             track.mTrackID   = static_cast<int64_t>(id);
-            track.mName      = getAttribute(track_node, "Name");
-            track.mArtist    = getAttribute(track_node, "Artist");
-            track.mAlbum     = getAttribute(track_node, "Album");
-            track.mGenre     = getAttribute(track_node, "Genre");
-            track.mLabel     = getAttribute(track_node, "Label");
-            track.mTonality  = getAttribute(track_node, "Tonality");
-            track.mFilepath  = mDecodeURI ? decodeURI(getAttribute(track_node, "Location")) : getAttribute(track_node, "Location");
-            track.mFilename  = utility::getFileName(track.mFilepath);
-            track.mDateAdded = getAttribute(track_node, "DateAdded");
-            track.mTotalTime = std::atoi(getAttribute(track_node, "TotalTime").c_str());
-            track.mYear      = std::atoi(getAttribute(track_node, "Year").c_str());
-            track.mPlayCount = std::atoi(getAttribute(track_node, "PlayCount").c_str());
-            track.mRating    = std::atoi(getAttribute(track_node, "Rating").c_str());
-            track.mAverageBpm= std::atof(getAttribute(track_node, "AverageBpm").c_str());
+            track.mName      = getAttribute(track_node, RBoxAttributes::Name);
+            track.mArtist    = getAttribute(track_node, RBoxAttributes::Artist);
+            track.mAlbum     = getAttribute(track_node, RBoxAttributes::Album);
+            track.mGenre     = getAttribute(track_node, RBoxAttributes::Genre);
+            track.mLabel     = getAttribute(track_node, RBoxAttributes::Label);
+            track.mTonality  = getAttribute(track_node, RBoxAttributes::Tonality);
+            track.mLocation  = getAttribute(track_node, RBoxAttributes::Location);
+            track.mFilename  = decodeURI(utility::getFileName(track.mLocation));
+            track.mDateAdded = getAttribute(track_node, RBoxAttributes::DateAdded);
+            track.mTotalTime = std::atoi(getAttribute(track_node, RBoxAttributes::TotalTime).c_str());
+            track.mYear      = std::atoi(getAttribute(track_node, RBoxAttributes::Year).c_str());
+            track.mPlayCount = std::atoi(getAttribute(track_node, RBoxAttributes::PlayCount).c_str());
+            track.mRating    = std::atoi(getAttribute(track_node, RBoxAttributes::Rating).c_str());
+            track.mAverageBpm= std::atof(getAttribute(track_node, RBoxAttributes::AverageBpm).c_str());
 
+            // Read position marks (hot cues)
+            for (auto* pos_mark_node = track_node->first_node(RBoxNodes::POSITION_MARK); pos_mark_node != nullptr; pos_mark_node = pos_mark_node->next_sibling(RBoxNodes::POSITION_MARK))
+            {
+                RbTrack::PositionMark pos_mark;
+                pos_mark.mNum   = std::atoi(getAttribute(pos_mark_node, RBoxAttributes::PositionMark_Num).c_str());
+                pos_mark.mName  = getAttribute(pos_mark_node, RBoxAttributes::PositionMark_Name);
+                pos_mark.mStart = std::atof(getAttribute(pos_mark_node, RBoxAttributes::PositionMark_Start).c_str());
+                track.mPositionMarks.push_back(std::move(pos_mark));
+            }
+
+            // Store the track in the map, warn if the track ID is a duplicate and ignore the duplicate
             if (!mTracks.emplace(track.mTrackID, std::move(track)).second)
                 nap::Logger::warn("Duplicate TrackID %lld in '%s', ignoring", id, mCollectionFile.c_str());
         }
 
         // Playlists
         mPlaylists.clear();
-        if (auto* playlists_node = root->first_node("PLAYLISTS"))
+        if (auto* playlists_node = root->first_node(RBoxNodes::PLAYLISTS))
             readPlaylistNodes(playlists_node, mTracks, mPlaylists);
 
+        // Done, log how long it took to read the collection and return success
         nap::Logger::info("Read %zu tracks and %zu playlists from '%s' in %f seconds", mTracks.size(), mPlaylists.size(), mCollectionFile.c_str(), timer.getElapsedTimeFloat());
+
         return true;
     }
 }

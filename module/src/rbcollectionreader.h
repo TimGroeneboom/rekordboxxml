@@ -13,6 +13,14 @@ namespace nap
      */
     struct RbTrack
     {
+        struct PositionMark
+        {
+            int mNum = 0;
+            std::string mName = "";
+            float mStart = 0.0f;
+            std::string mType = "";
+        };
+
         int64_t mTrackID = 0;
         std::string mName;
         std::string mArtist;
@@ -21,13 +29,14 @@ namespace nap
         std::string mLabel;
         std::string mTonality;
         std::string mFilename;
-        std::string mFilepath;
+        std::string mLocation;
         std::string mDateAdded;
         int mTotalTime = 0;     //!< Duration in seconds
         int mYear = 0;
         int mPlayCount = 0;
         int mRating = 0;
         double mAverageBpm = 0.0;
+        std::vector<PositionMark> mPositionMarks;
     };
 
     class NAPAPI RbCollectionReader : public Resource
